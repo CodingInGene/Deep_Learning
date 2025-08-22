@@ -2,6 +2,7 @@
 import numpy as np
 from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
 from sklearn.datasets import make_blobs, make_classification, make_circles
 from sklearn.metrics import accuracy_score
 from matplotlib import pyplot as plt
@@ -23,7 +24,7 @@ def loadData(dataset):
                 y.append(1)
             else:
                 y.append(0)
-        return data[:,0 :2], np.array(y)
+        return data[:,0 :2], np.array(target)
     
     if dataset=="xor":
         x = np.random.uniform(low=-1, high=1, size=(500,2))
@@ -60,15 +61,22 @@ class MultiLayerPerceptron:
     def activation(self,z, activation):
         if activation=="sigmoid":
             return 1/(1+np.exp(-z))     #Sigmoid activation
+        if activation=="softmax":
+            exp_z = np.exp(z - np.max(z))  # numerical stability
+            return exp_z / np.sum(exp_z, axis=-1)
 
     def findLoss(self, y_hat, yactual):  #Expects single row of y
         if self.loss_function == "binary_crossentropy":
             loss = -(yactual*np.log(y_hat)) - ((1-yactual)*np.log(1-y_hat))
-            return loss
+        if self.loss_function == "categorical_crossentropy":
+            loss = -np.sum(yactual * np.log(y_hat))
+        return loss
 
-    def activation_derivative(self, y_hat, activation):
+    def activation_derivative(self, y_hat, yactual=None, row=None, activation=None):   #yactual, row are only used on softmax function
         if activation == "sigmoid":
             return y_hat * (1.0 - y_hat)
+        if activation == "softmax":
+            return np.dot((y_hat - yactual),row)    #For softmax 
 
     def forwardPass(self,row):    #Takes batch of inputs
         output = row
@@ -78,13 +86,16 @@ class MultiLayerPerceptron:
             self.layerOutputs[i] = output   #Storing each layer's output
         return output   #Send last layers output (y_hat)
 
-    def backpropagation(self, y_hat, yactual, row):
+    def backpropagation(self, y_hat, yactual, row):   #yactual, row are only used on softmax function
         #Errors
         for i in reversed(range(len(self.layerWeights))):
             if i == len(self.layerWeights)-1:   #Output layer
-                self.layerDeltas[i] = (y_hat - yactual) * self.activation_derivative(y_hat, activation=self.activationChoices[i])
+                if self.activationChoices[i] == "sigmoid":
+                    self.layerDeltas[i] = (y_hat - yactual) * self.activation_derivative(y_hat, activation=self.activationChoices[i])
+                elif self.activationChoices[i] == "softmax":
+                    self.layerDeltas[i] = (y_hat - yactual) #No need to use derivation here, as it is (yhat-y)
             else:
-                da = self.activation_derivative(self.layerOutputs[i], activation=self.activationChoices[i])   #Derivation of activation
+                da = self.activation_derivative(self.layerOutputs[i], yactual, row, activation=self.activationChoices[i])   #Derivation of activation
                 self.layerDeltas[i] = np.dot(self.layerWeights[i+1], self.layerDeltas[i+1]) * da
 
         #Weight and bias update
@@ -123,29 +134,42 @@ class MultiLayerPerceptron:
 
 
 
+
 #Main block
 if __name__=="__main__":
-    X, y = loadData(dataset="xor")
+    X, y = loadData(dataset="iris")
 
     #Split
     xtrain, xtest, ytrain, ytest = train_test_split(X,y, train_size=0.7)
     print(xtrain.shape, ytest.shape)
 
     model = MultiLayerPerceptron()
-    model.add(4, inputs_dim=2)
-    model.add(2)
-    model.add(1, loss_function="binary_crossentropy")
+    model.add(25, inputs_dim=2, activation="sigmoid")
+    model.add(25, activation="sigmoid")
+    model.add(3, activation="softmax", loss_function="categorical_crossentropy")
 
     lr = 0.1
-    epochs = 100
+    epochs = 1000
 
-    model.fit(xtrain, ytrain, learning_rate=lr, epochs=epochs)
+    #print(ytrain.reshape(-1,1))
 
-    print(model.layerWeights)
-    print(model.layerBiases)
+    onehot = OneHotEncoder(sparse_output=False)
+    ytrain_new = onehot.fit_transform(ytrain.reshape(-1,1))
+    ytest_new = onehot.fit_transform(ytest.reshape(-1,1))
+
+
+    model.fit(xtrain, ytrain_new, learning_rate=lr, epochs=epochs)
+
+    print(ytrain_new[:10])
+
+    # print(model.layerWeights)
+    # print(model.layerBiases)
 
     y_pred = model.predict(xtest)
-    y_pred = np.where(y_pred>=0.5, 1, 0)
+    print(y_pred)
+    #y_pred = np.where(y_pred>=0.5, 1, 0)
+    y_pred = np.argmax(y_pred, axis=1)
+    print(y_pred)
 
     #Accuracy
     acc = accuracy_score(ytest, y_pred)
@@ -165,11 +189,12 @@ if __name__=="__main__":
     
     # Predict over mesh grid
     Z = model.predict(np.c_[xx.ravel(), yy.ravel()])
+    Z = np.argmax(Z, axis=1)
     Z = Z.reshape(xx.shape)
     
     # Plot decision boundary and margins
     ax2.contourf(xx, yy, Z, cmap='coolwarm', alpha=0.2)
-    ax2.contour(xx, yy, Z, colors='k', levels=[0, 1], 
+    ax2.contour(xx, yy, Z, colors='k', levels=[0, 1, 2], 
                 linestyles=['--', '-', '--'], linewidths=[1, 2, 1])
 
     ax1.set_xlabel("Epochs")
